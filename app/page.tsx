@@ -77,6 +77,11 @@ export default function Home() {
     setActive(true);
   }
 
+  function endPerformanceEarly() {
+    setActive(false);
+    setNotice("Performance ended early — your reflection is ready.");
+  }
+
   const clock = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 
   return (
@@ -169,7 +174,10 @@ export default function Home() {
           <div className="liveTop"><span><i/> {phase === "prep" ? "PREPARE" : "RECORDING"}</span><button onClick={() => setActive(false)} aria-label="End session">×</button></div>
           <p>EXCERPT {current + 1} OF {excerpts.length}</p><h2>{excerpts[current]?.title}</h2><span className="measures">{excerpts[current]?.measures}</span>
           <div className="timer">{clock}</div><p className="timerLabel">{phase === "prep" ? "Preparation time" : "Performance time"}</p>
-          {phase === "perform" && current < excerpts.length - 1 && <button className="nextButton" onClick={() => { setCurrent(current + 1); setPhase("prep"); setSeconds(prepTime); }}>Complete excerpt →</button>}
+          {phase === "perform" && <div className="performanceActions">
+            {current < excerpts.length - 1 && <button className="nextButton" onClick={() => { setCurrent(current + 1); setPhase("prep"); setSeconds(prepTime); }}>Complete excerpt →</button>}
+            <button className="endPerformanceButton" onClick={endPerformanceEarly}>End performance early</button>
+          </div>}
           <p className="keepGoing">Take a breath. You’ve done the work.</p>
         </div>
       </div>}
