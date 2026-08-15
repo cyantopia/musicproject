@@ -2,7 +2,7 @@
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createClient as createSupabaseClient } from "../lib/supabase/client";
-import { signInWithPassword, signOut, signUpWithPassword } from "../lib/supabase/auth";
+import { resendSignupConfirmation, signInWithPassword, signOut, signUpWithPassword } from "../lib/supabase/auth";
 
 type Excerpt = { id: number; title: string; measures: string; file?: string; fileUrl?: string; fileType?: string };
 type SessionResult = { id: number; name: string; date: string; instrument: string; score: number; reflection: string; audioUrl?: string };
@@ -47,6 +47,7 @@ export default function Home() {
   const [authPassword, setAuthPassword] = useState("");
   const [authStatus, setAuthStatus] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
+  const [confirmationExpired, setConfirmationExpired] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -62,6 +63,19 @@ export default function Home() {
     });
     return () => listener.subscription.unsubscribe();
   }, [supabase]);
+
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const errorCode = query.get("error_code") || hash.get("error_code");
+    if (errorCode === "otp_expired") {
+      setAuthMode("signup");
+      setAuthStatus("That confirmation link has expired or was already used. Enter your email below and request a new link.");
+      setConfirmationExpired(true);
+      setAuthOpen(true);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
 
   useEffect(() => {
     if (!active) return;
@@ -171,7 +185,7 @@ export default function Home() {
     setAuthStatus("");
     const result = authMode === "login"
       ? await signInWithPassword(supabase, authEmail, authPassword)
-      : await signUpWithPassword(supabase, authEmail, authPassword);
+      : await signUpWithPassword(supabase, authEmail, authPassword, window.location.origin);
     setAuthBusy(false);
     if (result.error) {
       setAuthStatus(result.error.message);
@@ -179,11 +193,28 @@ export default function Home() {
     }
     if (authMode === "signup" && !result.data.session) {
       setAuthStatus("Check your email to confirm your StageReady account.");
+      setConfirmationExpired(false);
       return;
     }
     setAuthOpen(false);
     setAuthPassword("");
     setNotice("You’re signed in. Welcome to StageReady.");
+  }
+
+  async function handleResendConfirmation() {
+    if (!authEmail) {
+      setAuthStatus("Enter the email address you used to create your account.");
+      return;
+    }
+    setAuthBusy(true);
+    const { error } = await resendSignupConfirmation(supabase, authEmail, window.location.origin);
+    setAuthBusy(false);
+    if (error) {
+      setAuthStatus(error.message);
+      return;
+    }
+    setConfirmationExpired(false);
+    setAuthStatus("A new confirmation link was sent. Use the newest email only.");
   }
 
   async function handleSignOut() {
@@ -316,9 +347,10 @@ export default function Home() {
             <label>Email address<input type="email" autoComplete="email" required value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} placeholder="musician@example.com" /></label>
             <label>Password<input type="password" autoComplete={authMode === "login" ? "current-password" : "new-password"} required minLength={6} value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} placeholder="At least 6 characters" /></label>
             {authStatus && <div className="authStatus" role="status">{authStatus}</div>}
+            {confirmationExpired && <button type="button" className="resendButton" disabled={authBusy} onClick={handleResendConfirmation}>Resend confirmation email</button>}
             <button className="authSubmit" disabled={authBusy}>{authBusy ? "Please wait…" : authMode === "login" ? "Sign in" : "Create account"}</button>
           </form>
-          <button className="authSwitch" onClick={() => { setAuthMode(authMode === "login" ? "signup" : "login"); setAuthStatus(""); }}>{authMode === "login" ? "New here? Create an account" : "Already have an account? Sign in"}</button>
+          <button className="authSwitch" onClick={() => { setAuthMode(authMode === "login" ? "signup" : "login"); setAuthStatus(""); setConfirmationExpired(false); }}>{authMode === "login" ? "New here? Create an account" : "Already have an account? Sign in"}</button>
         </div>
       </div>}
 
