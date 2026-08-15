@@ -3,7 +3,7 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Excerpt = { id: number; title: string; measures: string; file?: string; fileUrl?: string; fileType?: string };
-type SessionResult = { id: number; name: string; date: string; instrument: string; score: number; reflection: string };
+type SessionResult = { id: number; name: string; date: string; instrument: string; score: number; reflection: string; audioUrl?: string };
 
 const starterExcerpts: Excerpt[] = [
   { id: 1, title: "Mozart — Exposition", measures: "mm. 1–42" },
@@ -35,7 +35,12 @@ export default function Home() {
   const [ratings, setRatings] = useState<Record<string, number>>({ Tone: 3, Rhythm: 3, Intonation: 3 });
   const [reflection, setReflection] = useState("");
   const [history, setHistory] = useState<SessionResult[]>([]);
+  const [audioUrl, setAudioUrl] = useState("");
+  const [recordingError, setRecordingError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const microphoneStreamRef = useRef<MediaStream | null>(null);
 
   const ordered = useMemo(() => excerpts, [excerpts]);
 
@@ -48,6 +53,7 @@ export default function Home() {
           setPhase("perform");
           return playTime;
         }
+        stopRecording();
         setActive(false);
         setNotice("Take complete — your reflection is ready.");
         setView("reflection");
@@ -72,7 +78,7 @@ export default function Home() {
     setNotice(`${files.length} excerpt${files.length > 1 ? "s" : ""} added.`);
   }
 
-  function startAudition() {
+  async function startAudition() {
     if (!excerpts.length) return;
     setExcerpts((items) => {
       if (!randomize) return items;
@@ -84,10 +90,42 @@ export default function Home() {
     setNotice("");
     setRatings({ Tone: 3, Rhythm: 3, Intonation: 3 });
     setReflection("");
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    setAudioUrl("");
+    setRecordingError("");
+    audioChunksRef.current = [];
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      microphoneStreamRef.current = stream;
+      const recorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      recorder.ondataavailable = (event) => { if (event.data.size) audioChunksRef.current.push(event.data); };
+      recorder.onstop = () => {
+        const recording = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        if (recording.size) setAudioUrl(URL.createObjectURL(recording));
+        microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
+        microphoneStreamRef.current = null;
+      };
+      recorder.start();
+    } catch {
+      setRecordingError("Microphone access was unavailable. You can still complete the audition and reflection.");
+    }
     setActive(true);
   }
 
+  function stopRecording() {
+    const recorder = mediaRecorderRef.current;
+    if (recorder?.state === "recording") recorder.stop();
+    else microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
+  }
+
+  function cancelSession() {
+    stopRecording();
+    setActive(false);
+  }
+
   function endPerformanceEarly() {
+    stopRecording();
     setActive(false);
     setNotice("Performance ended early — your reflection is ready.");
     setView("reflection");
@@ -95,7 +133,7 @@ export default function Home() {
 
   function saveReflection() {
     const score = Math.round(Object.values(ratings).reduce((sum, rating) => sum + rating, 0) / 15 * 100);
-    setHistory((items) => [{ id: Date.now(), name: sessionName, date, instrument, score, reflection }, ...items]);
+    setHistory((items) => [{ id: Date.now(), name: sessionName, date, instrument, score, reflection, audioUrl: audioUrl || undefined }, ...items]);
     setNotice("Reflection saved to your audition history.");
     setView("history");
   }
@@ -198,7 +236,7 @@ export default function Home() {
         <div className="viewHeading"><span className="step">02</span><p>YOUR AUDITION JOURNAL</p><h1>Practice history</h1><span>Every honest take is evidence of progress.</span></div>
         {history.length ? <div className="historyList">{history.map((session) => <article className="historyCard" key={session.id}>
           <div className="historyDate"><strong>{new Date(`${session.date}T12:00:00`).toLocaleDateString("en", { month: "short", day: "numeric" })}</strong><span>{new Date(`${session.date}T12:00:00`).getFullYear()}</span></div>
-          <div><p>{session.instrument.toUpperCase()} · MOCK AUDITION</p><h2>{session.name}</h2><span>{session.reflection || "Reflection completed."}</span></div>
+          <div><p>{session.instrument.toUpperCase()} · MOCK AUDITION</p><h2>{session.name}</h2><span>{session.reflection || "Reflection completed."}</span>{session.audioUrl && <audio className="historyAudio" controls src={session.audioUrl}>Your browser does not support audio playback.</audio>}</div>
           <div className="historyScore"><strong>{session.score}</strong><span>READINESS</span></div>
         </article>)}</div> : <div className="emptyHistory"><span>◷</span><h2>No completed auditions yet</h2><p>Finish a mock audition and your reflection will appear here.</p><button className="startButton" onClick={() => setView("practice")}>Start practicing →</button></div>}
       </section>}
@@ -206,7 +244,9 @@ export default function Home() {
       {view === "reflection" && <section className="appView reflectionView">
         <div className="viewHeading"><span className="step">03</span><p>TAKE A MOMENT</p><h1>Reflect on your performance</h1><span>Be specific, be kind, and choose one thing to carry forward.</span></div>
         <div className="reflectionGrid">
-          <div className="reflectionSummary"><span>SESSION COMPLETE</span><h2>{sessionName}</h2><p>{excerpts.length} excerpts · {instrument} · {oneTake ? "One take" : "Open attempts"}</p><div className="bigScore"><strong>{Math.round(Object.values(ratings).reduce((sum, rating) => sum + rating, 0) / 15 * 100)}</strong><span>/100<br/>READINESS</span></div></div>
+          <div className="reflectionSummary"><span>SESSION COMPLETE</span><h2>{sessionName}</h2><p>{excerpts.length} excerpts · {instrument} · {oneTake ? "One take" : "Open attempts"}</p>
+            <div className="takePlayback"><span>YOUR PERFORMANCE</span>{audioUrl ? <audio controls src={audioUrl}>Your browser does not support audio playback.</audio> : <p>{recordingError || "Finalizing your recording…"}</p>}</div>
+            <div className="bigScore"><strong>{Math.round(Object.values(ratings).reduce((sum, rating) => sum + rating, 0) / 15 * 100)}</strong><span>/100<br/>READINESS</span></div></div>
           <div className="reflectionForm"><h2>How did it feel?</h2>
             {focusItems.map(([name, detail]) => <div className="reflectionRating" key={name}><div><strong>{name}</strong><span>{detail}</span></div><div>{[1,2,3,4,5].map((value) => <button key={value} aria-label={`${name}: ${value} out of 5`} className={value <= ratings[name] ? "selected" : ""} onClick={() => setRatings((items) => ({...items, [name]: value}))}/>)}</div></div>)}
             <label className="reflectionLabel">What will you focus on next?<textarea value={reflection} onChange={(event) => setReflection(event.target.value)} placeholder="Write a note to your future self…" /></label>
@@ -219,7 +259,7 @@ export default function Home() {
 
       {active && <div className="modal" role="dialog" aria-modal="true" aria-label="Mock audition in progress">
         <div className="liveCard">
-          <div className="liveTop"><span><i/> {phase === "prep" ? "PREPARE" : "RECORDING"}</span><button onClick={() => setActive(false)} aria-label="End session">×</button></div>
+          <div className="liveTop"><span><i/> {phase === "prep" ? "PREPARE" : "RECORDING"}</span><button onClick={cancelSession} aria-label="Cancel session">×</button></div>
           <div className="liveBody">
             <div className="scoreViewer">
               {excerpts[current]?.fileUrl ? (
