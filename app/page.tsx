@@ -2,7 +2,7 @@
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 
-type Excerpt = { id: number; title: string; measures: string; file?: string };
+type Excerpt = { id: number; title: string; measures: string; file?: string; fileUrl?: string; fileType?: string };
 
 const starterExcerpts: Excerpt[] = [
   { id: 1, title: "Mozart — Exposition", measures: "mm. 1–42" },
@@ -59,6 +59,8 @@ export default function Home() {
       title: file.name.replace(/\.[^.]+$/, ""),
       measures: "Add measures",
       file: file.name,
+      fileUrl: URL.createObjectURL(file),
+      fileType: file.type,
     }));
     setExcerpts((items) => [...items, ...additions]);
     setNotice(`${files.length} excerpt${files.length > 1 ? "s" : ""} added.`);
@@ -80,6 +82,14 @@ export default function Home() {
   function endPerformanceEarly() {
     setActive(false);
     setNotice("Performance ended early — your reflection is ready.");
+  }
+
+  function removeExcerpt(id: number) {
+    setExcerpts((list) => {
+      const removed = list.find((item) => item.id === id);
+      if (removed?.fileUrl) URL.revokeObjectURL(removed.fileUrl);
+      return list.filter((item) => item.id !== id);
+    });
   }
 
   const clock = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
@@ -146,7 +156,7 @@ export default function Home() {
               <span className="grip">⠿</span><span className="number">{String(index + 1).padStart(2, "0")}</span>
               <div className="scoreThumb"><span>𝄞</span></div>
               <div className="excerptName"><input aria-label="Excerpt name" value={item.title} onChange={(e) => setExcerpts((list) => list.map(x => x.id === item.id ? {...x, title: e.target.value} : x))}/><input aria-label="Measures" value={item.measures} onChange={(e) => setExcerpts((list) => list.map(x => x.id === item.id ? {...x, measures: e.target.value} : x))}/></div>
-              <button className="remove" aria-label={`Remove ${item.title}`} onClick={() => setExcerpts((list) => list.filter(x => x.id !== item.id))}>×</button>
+              <button className="remove" aria-label={`Remove ${item.title}`} onClick={() => removeExcerpt(item.id)}>×</button>
             </article>
           ))}
           <button className="dropzone" onClick={() => fileRef.current?.click()}><span>＋</span><strong>Drop another score here</strong><small>or click to browse</small></button>
@@ -172,13 +182,24 @@ export default function Home() {
       {active && <div className="modal" role="dialog" aria-modal="true" aria-label="Mock audition in progress">
         <div className="liveCard">
           <div className="liveTop"><span><i/> {phase === "prep" ? "PREPARE" : "RECORDING"}</span><button onClick={() => setActive(false)} aria-label="End session">×</button></div>
-          <p>EXCERPT {current + 1} OF {excerpts.length}</p><h2>{excerpts[current]?.title}</h2><span className="measures">{excerpts[current]?.measures}</span>
-          <div className="timer">{clock}</div><p className="timerLabel">{phase === "prep" ? "Preparation time" : "Performance time"}</p>
-          {phase === "perform" && <div className="performanceActions">
-            {current < excerpts.length - 1 && <button className="nextButton" onClick={() => { setCurrent(current + 1); setPhase("prep"); setSeconds(prepTime); }}>Complete excerpt →</button>}
-            <button className="endPerformanceButton" onClick={endPerformanceEarly}>End performance early</button>
-          </div>}
-          <p className="keepGoing">Take a breath. You’ve done the work.</p>
+          <div className="liveBody">
+            <div className="scoreViewer">
+              {excerpts[current]?.fileUrl ? (
+                excerpts[current]?.fileType === "application/pdf" || excerpts[current]?.file?.toLowerCase().endsWith(".pdf")
+                  ? <object data={excerpts[current].fileUrl} type="application/pdf" aria-label={`${excerpts[current].title} score`}><a href={excerpts[current].fileUrl} target="_blank" rel="noreferrer">Open score PDF</a></object>
+                  : <img src={excerpts[current].fileUrl} alt={`${excerpts[current].title} score`} />
+              ) : <div className="scorePlaceholder"><span>𝄞</span><strong>No score uploaded</strong><small>Upload a PDF or image when building your excerpt list.</small></div>}
+            </div>
+            <div className="liveControls">
+              <p>EXCERPT {current + 1} OF {excerpts.length}</p><h2>{excerpts[current]?.title}</h2><span className="measures">{excerpts[current]?.measures}</span>
+              <div className="timer">{clock}</div><p className="timerLabel">{phase === "prep" ? "Preparation time" : "Performance time"}</p>
+              {phase === "perform" && <div className="performanceActions">
+                {current < excerpts.length - 1 && <button className="nextButton" onClick={() => { setCurrent(current + 1); setPhase("prep"); setSeconds(prepTime); }}>Complete excerpt →</button>}
+                <button className="endPerformanceButton" onClick={endPerformanceEarly}>End performance early</button>
+              </div>}
+              <p className="keepGoing">Take a breath. You’ve done the work.</p>
+            </div>
+          </div>
         </div>
       </div>}
 
