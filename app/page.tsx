@@ -1,6 +1,8 @@
 "use client";
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { createClient as createSupabaseClient } from "../lib/supabase/client";
+import { signInWithPassword, signOut, signUpWithPassword } from "../lib/supabase/auth";
 
 type Excerpt = { id: number; title: string; measures: string; file?: string; fileUrl?: string; fileType?: string };
 type SessionResult = { id: number; name: string; date: string; instrument: string; score: number; reflection: string; audioUrl?: string };
@@ -37,12 +39,29 @@ export default function Home() {
   const [history, setHistory] = useState<SessionResult[]>([]);
   const [audioUrl, setAudioUrl] = useState("");
   const [recordingError, setRecordingError] = useState("");
+  const [userEmail, setUserEmail] = useState("");
+  const [authOpen, setAuthOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authStatus, setAuthStatus] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const microphoneStreamRef = useRef<MediaStream | null>(null);
 
   const ordered = useMemo(() => excerpts, [excerpts]);
+  const supabase = useMemo(() => createSupabaseClient(), []);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setUserEmail(data.user?.email || ""));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUserEmail(session?.user.email || "");
+    });
+    return () => listener.subscription.unsubscribe();
+  }, [supabase]);
 
   useEffect(() => {
     if (!active) return;
@@ -146,6 +165,33 @@ export default function Home() {
     });
   }
 
+  async function handleAuthSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAuthBusy(true);
+    setAuthStatus("");
+    const result = authMode === "login"
+      ? await signInWithPassword(supabase, authEmail, authPassword)
+      : await signUpWithPassword(supabase, authEmail, authPassword);
+    setAuthBusy(false);
+    if (result.error) {
+      setAuthStatus(result.error.message);
+      return;
+    }
+    if (authMode === "signup" && !result.data.session) {
+      setAuthStatus("Check your email to confirm your StageReady account.");
+      return;
+    }
+    setAuthOpen(false);
+    setAuthPassword("");
+    setNotice("You’re signed in. Welcome to StageReady.");
+  }
+
+  async function handleSignOut() {
+    await signOut(supabase);
+    setAccountOpen(false);
+    setNotice("You’ve been signed out.");
+  }
+
   const clock = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 
   return (
@@ -159,7 +205,10 @@ export default function Home() {
           <button className={view === "history" ? "active" : ""} onClick={() => setView("history")}>History</button>
           <button className={view === "progress" ? "active" : ""} onClick={() => setView("progress")}>Progress</button>
         </nav>
-        <button className="iconButton" aria-label="Open profile">AR</button>
+        <div className="accountArea">
+          <button className={`iconButton ${userEmail ? "signedIn" : ""}`} aria-label={userEmail ? "Open account menu" : "Sign in"} onClick={() => userEmail ? setAccountOpen((open) => !open) : setAuthOpen(true)}>{userEmail ? userEmail.slice(0, 2).toUpperCase() : "IN"}</button>
+          {accountOpen && userEmail && <div className="accountMenu"><span>SIGNED IN AS</span><strong>{userEmail}</strong><button onClick={handleSignOut}>Sign out</button></div>}
+        </div>
       </header>
 
       {view === "practice" && <><section className="hero" id="top">
@@ -256,6 +305,22 @@ export default function Home() {
       </section>}
 
       {notice && <div className="toast" role="status">{notice}</div>}
+
+      {authOpen && <div className="authOverlay" role="dialog" aria-modal="true" aria-label={authMode === "login" ? "Sign in to StageReady" : "Create a StageReady account"}>
+        <div className="authCard">
+          <div className="authBrand"><span className="brandMark">S</span><button onClick={() => setAuthOpen(false)} aria-label="Close sign in">×</button></div>
+          <p>{authMode === "login" ? "WELCOME BACK" : "JOIN STAGEREADY"}</p>
+          <h2>{authMode === "login" ? "Sign in to keep your progress." : "Create your practice account."}</h2>
+          <span className="authIntro">Your audition history and reflections will stay connected to your email.</span>
+          <form onSubmit={handleAuthSubmit}>
+            <label>Email address<input type="email" autoComplete="email" required value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} placeholder="musician@example.com" /></label>
+            <label>Password<input type="password" autoComplete={authMode === "login" ? "current-password" : "new-password"} required minLength={6} value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} placeholder="At least 6 characters" /></label>
+            {authStatus && <div className="authStatus" role="status">{authStatus}</div>}
+            <button className="authSubmit" disabled={authBusy}>{authBusy ? "Please wait…" : authMode === "login" ? "Sign in" : "Create account"}</button>
+          </form>
+          <button className="authSwitch" onClick={() => { setAuthMode(authMode === "login" ? "signup" : "login"); setAuthStatus(""); }}>{authMode === "login" ? "New here? Create an account" : "Already have an account? Sign in"}</button>
+        </div>
+      </div>}
 
       {active && <div className="modal" role="dialog" aria-modal="true" aria-label="Mock audition in progress">
         <div className="liveCard">
