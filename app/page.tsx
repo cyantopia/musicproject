@@ -3,6 +3,7 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Excerpt = { id: number; title: string; measures: string; file?: string; fileUrl?: string; fileType?: string };
+type SessionResult = { id: number; name: string; date: string; instrument: string; score: number; reflection: string };
 
 const starterExcerpts: Excerpt[] = [
   { id: 1, title: "Mozart — Exposition", measures: "mm. 1–42" },
@@ -30,6 +31,10 @@ export default function Home() {
   const [seconds, setSeconds] = useState(prepTime);
   const [current, setCurrent] = useState(0);
   const [notice, setNotice] = useState("");
+  const [view, setView] = useState<"practice" | "history" | "progress" | "reflection">("practice");
+  const [ratings, setRatings] = useState<Record<string, number>>({ Tone: 3, Rhythm: 3, Intonation: 3 });
+  const [reflection, setReflection] = useState("");
+  const [history, setHistory] = useState<SessionResult[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const ordered = useMemo(() => excerpts, [excerpts]);
@@ -45,6 +50,7 @@ export default function Home() {
         }
         setActive(false);
         setNotice("Take complete — your reflection is ready.");
+        setView("reflection");
         return 0;
       });
     }, 1000);
@@ -76,12 +82,22 @@ export default function Home() {
     setPhase("prep");
     setSeconds(prepTime);
     setNotice("");
+    setRatings({ Tone: 3, Rhythm: 3, Intonation: 3 });
+    setReflection("");
     setActive(true);
   }
 
   function endPerformanceEarly() {
     setActive(false);
     setNotice("Performance ended early — your reflection is ready.");
+    setView("reflection");
+  }
+
+  function saveReflection() {
+    const score = Math.round(Object.values(ratings).reduce((sum, rating) => sum + rating, 0) / 15 * 100);
+    setHistory((items) => [{ id: Date.now(), name: sessionName, date, instrument, score, reflection }, ...items]);
+    setNotice("Reflection saved to your audition history.");
+    setView("history");
   }
 
   function removeExcerpt(id: number) {
@@ -97,18 +113,18 @@ export default function Home() {
   return (
     <main>
       <header className="topbar">
-        <a className="brand" href="#top" aria-label="StageReady home">
+        <a className="brand" href="#top" aria-label="StageReady home" onClick={() => setView("practice")}>
           <span className="brandMark">S</span><span>StageReady</span>
         </a>
         <nav aria-label="Primary navigation">
-          <a className="active" href="#practice">Practice</a>
-          <a href="#history">History</a>
-          <a href="#progress">Progress</a>
+          <button className={view === "practice" ? "active" : ""} onClick={() => setView("practice")}>Practice</button>
+          <button className={view === "history" ? "active" : ""} onClick={() => setView("history")}>History</button>
+          <button className={view === "progress" ? "active" : ""} onClick={() => setView("progress")}>Progress</button>
         </nav>
         <button className="iconButton" aria-label="Open profile">AR</button>
       </header>
 
-      <section className="hero" id="top">
+      {view === "practice" && <><section className="hero" id="top">
         <div className="eyebrow"><span>●</span> MOCK AUDITION STUDIO</div>
         <h1>Practice the pressure.<br/><em>Trust the performance.</em></h1>
         <p>Build a realistic audition, remove the do-overs, and learn exactly what to work on next.</p>
@@ -166,18 +182,40 @@ export default function Home() {
           <div><span className="signal">●</span><p>YOUR ROOM IS READY</p><h2>{sessionName || "Untitled audition"}</h2><span>{excerpts.length} excerpts · {instrument} · {oneTake ? "One take" : "Retries allowed"}</span></div>
           <button className="startButton" onClick={startAudition} disabled={!excerpts.length}>Begin mock audition <span>→</span></button>
         </section>
-        {notice && <div className="toast" role="status">{notice}</div>}
-      </section>
+      </section></>}
 
-      <section className="reviewPreview" id="progress">
+      {view === "progress" && <section className="reviewPreview viewPage" id="progress">
         <div className="reviewCopy"><span className="step light">03</span><p>LISTEN. NOTICE. GROW.</p><h2>Feedback that makes<br/>the next take better.</h2><p className="muted">After your session, replay each excerpt and score what matters—without judging what doesn’t.</p></div>
         <div className="rubricCard">
           <div className="wave"><b>0:42</b><div className="bars">▂▅▃▇▄▆▂▅▇▃▆▄▂▇▅▃▆▂▅▇▃▅▂</div><button aria-label="Play recording">▶</button></div>
           <h3>How did it feel?</h3>
           {focusItems.map(([name, detail], index) => <div className="rubric" key={name}><div><strong>{name}</strong><span>{detail}</span></div><div className="rating" aria-label={`${name} sample rating`}>{[1,2,3,4,5].map(n => <i className={n <= 4-index%2 ? "filled" : ""} key={n}/>)}</div></div>)}
-          <div className="readiness"><span>Readiness score</span><strong>82<small>/100</small></strong></div>
+          <div className="readiness"><span>{history.length ? "Latest readiness" : "Sample readiness"}</span><strong>{history[0]?.score ?? 82}<small>/100</small></strong></div>
         </div>
-      </section>
+      </section>}
+
+      {view === "history" && <section className="appView" id="history">
+        <div className="viewHeading"><span className="step">02</span><p>YOUR AUDITION JOURNAL</p><h1>Practice history</h1><span>Every honest take is evidence of progress.</span></div>
+        {history.length ? <div className="historyList">{history.map((session) => <article className="historyCard" key={session.id}>
+          <div className="historyDate"><strong>{new Date(`${session.date}T12:00:00`).toLocaleDateString("en", { month: "short", day: "numeric" })}</strong><span>{new Date(`${session.date}T12:00:00`).getFullYear()}</span></div>
+          <div><p>{session.instrument.toUpperCase()} · MOCK AUDITION</p><h2>{session.name}</h2><span>{session.reflection || "Reflection completed."}</span></div>
+          <div className="historyScore"><strong>{session.score}</strong><span>READINESS</span></div>
+        </article>)}</div> : <div className="emptyHistory"><span>◷</span><h2>No completed auditions yet</h2><p>Finish a mock audition and your reflection will appear here.</p><button className="startButton" onClick={() => setView("practice")}>Start practicing →</button></div>}
+      </section>}
+
+      {view === "reflection" && <section className="appView reflectionView">
+        <div className="viewHeading"><span className="step">03</span><p>TAKE A MOMENT</p><h1>Reflect on your performance</h1><span>Be specific, be kind, and choose one thing to carry forward.</span></div>
+        <div className="reflectionGrid">
+          <div className="reflectionSummary"><span>SESSION COMPLETE</span><h2>{sessionName}</h2><p>{excerpts.length} excerpts · {instrument} · {oneTake ? "One take" : "Open attempts"}</p><div className="bigScore"><strong>{Math.round(Object.values(ratings).reduce((sum, rating) => sum + rating, 0) / 15 * 100)}</strong><span>/100<br/>READINESS</span></div></div>
+          <div className="reflectionForm"><h2>How did it feel?</h2>
+            {focusItems.map(([name, detail]) => <div className="reflectionRating" key={name}><div><strong>{name}</strong><span>{detail}</span></div><div>{[1,2,3,4,5].map((value) => <button key={value} aria-label={`${name}: ${value} out of 5`} className={value <= ratings[name] ? "selected" : ""} onClick={() => setRatings((items) => ({...items, [name]: value}))}/>)}</div></div>)}
+            <label className="reflectionLabel">What will you focus on next?<textarea value={reflection} onChange={(event) => setReflection(event.target.value)} placeholder="Write a note to your future self…" /></label>
+            <button className="startButton saveReflection" onClick={saveReflection}>Save reflection <span>→</span></button>
+          </div>
+        </div>
+      </section>}
+
+      {notice && <div className="toast" role="status">{notice}</div>}
 
       {active && <div className="modal" role="dialog" aria-modal="true" aria-label="Mock audition in progress">
         <div className="liveCard">
