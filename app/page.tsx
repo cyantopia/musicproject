@@ -7,12 +7,6 @@ import { resendSignupConfirmation, signInWithPassword, signOut, signUpWithPasswo
 type Excerpt = { id: number; title: string; measures: string; file?: string; fileUrl?: string; fileType?: string };
 type SessionResult = { id: number; name: string; date: string; instrument: string; score: number; reflection: string; audioUrl?: string };
 
-const starterExcerpts: Excerpt[] = [
-  { id: 1, title: "Mozart — Exposition", measures: "mm. 1–42" },
-  { id: 2, title: "Brahms — Symphony No. 2", measures: "mm. 17–48" },
-  { id: 3, title: "Mendelssohn — Scherzo", measures: "mm. 49–99" },
-];
-
 const focusItems = [
   ["Tone", "Centered and resonant"],
   ["Rhythm", "Steady and precise"],
@@ -27,7 +21,7 @@ export default function Home() {
   const [playTime, setPlayTime] = useState(120);
   const [randomize, setRandomize] = useState(true);
   const [oneTake, setOneTake] = useState(true);
-  const [excerpts, setExcerpts] = useState(starterExcerpts);
+  const [excerpts, setExcerpts] = useState<Excerpt[]>([]);
   const [active, setActive] = useState(false);
   const [phase, setPhase] = useState<"prep" | "perform">("prep");
   const [seconds, setSeconds] = useState(prepTime);
@@ -246,9 +240,8 @@ export default function Home() {
 
       {view === "practice" && <><section className="hero" id="top">
         <div className="eyebrow"><span>●</span> MOCK AUDITION STUDIO</div>
-        <h1>Practice the pressure.<br/><em>Trust the performance.</em></h1>
+        <h1>Practice the pressure.</h1>
         <p>Build a realistic audition, remove the do-overs, and learn exactly what to work on next.</p>
-        <div className="confidence"><span>Today’s focus</span><strong>Consistency over perfection</strong><div><i/></div></div>
       </section>
 
       <section className="workspace" id="practice">
@@ -286,7 +279,7 @@ export default function Home() {
         </div>
 
         <section className="excerptPanel">
-          <div className="excerptHeader"><span>{excerpts.length} excerpts</span><span>Drag to reorder · PDF or image</span></div>
+          <div className="excerptHeader"><span>{excerpts.length} {excerpts.length === 1 ? "excerpt" : "excerpts"}</span><span>Drag to reorder · PDF or image</span></div>
           {ordered.map((item, index) => (
             <article className="excerpt" key={item.id}>
               <span className="grip">⠿</span><span className="number">{String(index + 1).padStart(2, "0")}</span>
@@ -295,11 +288,11 @@ export default function Home() {
               <button className="remove" aria-label={`Remove ${item.title}`} onClick={() => removeExcerpt(item.id)}>×</button>
             </article>
           ))}
-          <button className="dropzone" onClick={() => fileRef.current?.click()}><span>＋</span><strong>Drop another score here</strong><small>or click to browse</small></button>
+          <button className="dropzone" onClick={() => fileRef.current?.click()}><span>＋</span><strong>{excerpts.length ? "Drop another score here" : "Add your first score here"}</strong><small>or click to browse</small></button>
         </section>
 
         <section className="readyCard">
-          <div><span className="signal">●</span><p>YOUR ROOM IS READY</p><h2>{sessionName || "Untitled audition"}</h2><span>{excerpts.length} excerpts · {instrument} · {oneTake ? "One take" : "Retries allowed"}</span></div>
+          <div><span className="signal">●</span><p>{excerpts.length ? "YOUR ROOM IS READY" : "UPLOAD A SCORE TO BEGIN"}</p><h2>{sessionName || "Untitled audition"}</h2><span>{excerpts.length} {excerpts.length === 1 ? "excerpt" : "excerpts"} · {instrument} · {oneTake ? "One take" : "Retries allowed"}</span></div>
           <button className="startButton" onClick={startAudition} disabled={!excerpts.length}>Begin mock audition <span>→</span></button>
         </section>
       </section></>}
