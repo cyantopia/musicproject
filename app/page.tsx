@@ -69,11 +69,13 @@ export default function Home() {
     const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
     const errorCode = query.get("error_code") || hash.get("error_code");
     if (errorCode === "otp_expired") {
-      setAuthMode("signup");
-      setAuthStatus("That confirmation link has expired or was already used. Enter your email below and request a new link.");
-      setConfirmationExpired(true);
-      setAuthOpen(true);
       window.history.replaceState({}, "", window.location.pathname);
+      queueMicrotask(() => {
+        setAuthMode("signup");
+        setAuthStatus("That confirmation link has expired or was already used. Enter your email below and request a new link.");
+        setConfirmationExpired(true);
+        setAuthOpen(true);
+      });
     }
   }, []);
 
