@@ -6,11 +6,12 @@ import { resendSignupConfirmation, signInWithPassword, signOut, signUpWithPasswo
 
 type Excerpt = { id: number; title: string; measures: string; file?: string; fileUrl?: string; fileType?: string };
 type SessionResult = { id: number; name: string; date: string; instrument: string; score: number; reflection: string; audioUrl?: string };
+type RubricCategory = { id: string; name: string; description: string; weight: number };
 
-const focusItems = [
-  ["Tone", "Centered and resonant"],
-  ["Rhythm", "Steady and precise"],
-  ["Intonation", "Consistent across registers"],
+const defaultRubric: RubricCategory[] = [
+  { id: "tone", name: "Tone", description: "Centered and resonant", weight: 3 },
+  { id: "rhythm", name: "Rhythm", description: "Steady and precise", weight: 3 },
+  { id: "intonation", name: "Intonation", description: "Consistent across registers", weight: 3 },
 ];
 
 export default function Home() {
@@ -27,8 +28,9 @@ export default function Home() {
   const [seconds, setSeconds] = useState(prepTime);
   const [current, setCurrent] = useState(0);
   const [notice, setNotice] = useState("");
-  const [view, setView] = useState<"practice" | "history" | "progress" | "reflection">("practice");
-  const [ratings, setRatings] = useState<Record<string, number>>({ Tone: 3, Rhythm: 3, Intonation: 3 });
+  const [view, setView] = useState<"practice" | "history" | "settings" | "reflection">("practice");
+  const [rubric, setRubric] = useState<RubricCategory[]>(defaultRubric);
+  const [ratings, setRatings] = useState<Record<string, number>>(() => Object.fromEntries(defaultRubric.map((item) => [item.id, 3])));
   const [reflection, setReflection] = useState("");
   const [history, setHistory] = useState<SessionResult[]>([]);
   const [audioUrl, setAudioUrl] = useState("");
@@ -46,9 +48,16 @@ export default function Home() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const microphoneStreamRef = useRef<MediaStream | null>(null);
+  const rubricLoadedRef = useRef(false);
 
   const ordered = useMemo(() => excerpts, [excerpts]);
   const supabase = useMemo(() => createSupabaseClient(), []);
+  const readinessScore = useMemo(() => {
+    const totalWeight = rubric.reduce((sum, item) => sum + item.weight, 0);
+    if (!totalWeight) return 0;
+    const weightedRatings = rubric.reduce((sum, item) => sum + (ratings[item.id] ?? 3) * item.weight, 0);
+    return Math.round(weightedRatings / (5 * totalWeight) * 100);
+  }, [ratings, rubric]);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUserEmail(data.user?.email || ""));
@@ -72,6 +81,35 @@ export default function Home() {
       });
     }
   }, []);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timeout = window.setTimeout(() => setNotice(""), 3500);
+    return () => window.clearTimeout(timeout);
+  }, [notice]);
+
+  useEffect(() => {
+    const savedRubric = window.localStorage.getItem("stageready-rubric");
+    if (!savedRubric) {
+      window.localStorage.setItem("stageready-rubric", JSON.stringify(defaultRubric));
+      rubricLoadedRef.current = true;
+      return;
+    }
+    try {
+      const parsed = JSON.parse(savedRubric) as RubricCategory[];
+      if (Array.isArray(parsed) && parsed.length && parsed.every((item) => item.id && item.name && item.weight > 0)) {
+        queueMicrotask(() => setRubric(parsed));
+      }
+    } catch {
+      window.localStorage.setItem("stageready-rubric", JSON.stringify(defaultRubric));
+    }
+    rubricLoadedRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (!rubricLoadedRef.current) return;
+    window.localStorage.setItem("stageready-rubric", JSON.stringify(rubric));
+  }, [rubric]);
 
   useEffect(() => {
     if (!active) return;
@@ -117,7 +155,7 @@ export default function Home() {
     setPhase("prep");
     setSeconds(prepTime);
     setNotice("");
-    setRatings({ Tone: 3, Rhythm: 3, Intonation: 3 });
+    setRatings(Object.fromEntries(rubric.map((item) => [item.id, 3])));
     setReflection("");
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     setAudioUrl("");
@@ -161,8 +199,7 @@ export default function Home() {
   }
 
   function saveReflection() {
-    const score = Math.round(Object.values(ratings).reduce((sum, rating) => sum + rating, 0) / 15 * 100);
-    setHistory((items) => [{ id: Date.now(), name: sessionName, date, instrument, score, reflection, audioUrl: audioUrl || undefined }, ...items]);
+    setHistory((items) => [{ id: Date.now(), name: sessionName, date, instrument, score: readinessScore, reflection, audioUrl: audioUrl || undefined }, ...items]);
     setNotice("Reflection saved to your audition history.");
     setView("history");
   }
@@ -173,6 +210,28 @@ export default function Home() {
       if (removed?.fileUrl) URL.revokeObjectURL(removed.fileUrl);
       return list.filter((item) => item.id !== id);
     });
+  }
+
+  function updateRubricCategory(id: string, updates: Partial<RubricCategory>) {
+    setRubric((items) => items.map((item) => item.id === id ? { ...item, ...updates } : item));
+  }
+
+  function addRubricCategory() {
+    const id = `category-${Date.now()}`;
+    setRubric((items) => [...items, { id, name: "New category", description: "Describe what good sounds like", weight: 3 }]);
+    setRatings((items) => ({ ...items, [id]: 3 }));
+    setNotice("New rubric category added.");
+  }
+
+  function removeRubricCategory(id: string) {
+    const categoryName = rubric.find((item) => item.id === id)?.name || "Rubric category";
+    setRubric((items) => items.length > 1 ? items.filter((item) => item.id !== id) : items);
+    setRatings((items) => {
+      const next = { ...items };
+      delete next[id];
+      return next;
+    });
+    setNotice(`${categoryName} removed from your rubric.`);
   }
 
   async function handleAuthSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -230,7 +289,7 @@ export default function Home() {
         <nav aria-label="Primary navigation">
           <button className={view === "practice" ? "active" : ""} onClick={() => setView("practice")}>Practice</button>
           <button className={view === "history" ? "active" : ""} onClick={() => setView("history")}>History</button>
-          <button className={view === "progress" ? "active" : ""} onClick={() => setView("progress")}>Progress</button>
+          <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>Settings</button>
         </nav>
         <div className="accountArea">
           <button className={`iconButton ${userEmail ? "signedIn" : ""}`} aria-label={userEmail ? "Open account menu" : "Sign in"} onClick={() => userEmail ? setAccountOpen((open) => !open) : setAuthOpen(true)}>{userEmail ? userEmail.slice(0, 2).toUpperCase() : "IN"}</button>
@@ -297,13 +356,18 @@ export default function Home() {
         </section>
       </section></>}
 
-      {view === "progress" && <section className="reviewPreview viewPage" id="progress">
-        <div className="reviewCopy"><span className="step light">03</span><p>LISTEN. NOTICE. GROW.</p><h2>Feedback that makes<br/>the next take better.</h2><p className="muted">After your session, replay each excerpt and score what matters—without judging what doesn’t.</p></div>
-        <div className="rubricCard">
-          <div className="wave"><b>0:42</b><div className="bars">▂▅▃▇▄▆▂▅▇▃▆▄▂▇▅▃▆▂▅▇▃▅▂</div><button aria-label="Play recording">▶</button></div>
-          <h3>How did it feel?</h3>
-          {focusItems.map(([name, detail], index) => <div className="rubric" key={name}><div><strong>{name}</strong><span>{detail}</span></div><div className="rating" aria-label={`${name} sample rating`}>{[1,2,3,4,5].map(n => <i className={n <= 4-index%2 ? "filled" : ""} key={n}/>)}</div></div>)}
-          <div className="readiness"><span>{history.length ? "Latest readiness" : "Sample readiness"}</span><strong>{history[0]?.score ?? 82}<small>/100</small></strong></div>
+      {view === "settings" && <section className="appView settingsView" id="settings">
+        <div className="viewHeading"><span className="step">03</span><p>MAKE IT YOURS</p><h1>Rubric settings</h1><span>Choose what matters and give important categories more influence on your readiness score.</span></div>
+        <div className="settingsGrid">
+          <div className="rubricEditor">
+            <div className="settingsHeader"><div><h2>Custom rubric</h2><p>Performance categories</p></div><button className="addCategory" onClick={addRubricCategory}><span aria-hidden="true">＋</span> Add rubric category</button></div>
+            {rubric.map((item) => <article className="rubricEditorRow" key={item.id}>
+              <div className="rubricFields"><label>Category<input value={item.name} onChange={(event) => updateRubricCategory(item.id, { name: event.target.value })}/></label><label>What does success sound like?<input value={item.description} onChange={(event) => updateRubricCategory(item.id, { description: event.target.value })}/></label></div>
+              <div className="weightControl"><label htmlFor={`weight-${item.id}`}>Importance</label><div><input id={`weight-${item.id}`} type="range" min="1" max="10" value={item.weight} onChange={(event) => updateRubricCategory(item.id, { weight: Number(event.target.value) })}/><strong>{item.weight}×</strong></div><small>{item.weight >= 8 ? "Major impact" : item.weight >= 5 ? "High impact" : item.weight >= 3 ? "Standard impact" : "Light impact"}</small></div>
+              <button className="removeCategory" aria-label={`Remove ${item.name}`} disabled={rubric.length === 1} onClick={() => removeRubricCategory(item.id)}><span aria-hidden="true">×</span><span>Remove</span></button>
+            </article>)}
+          </div>
+          <aside className="scorePreview"><p>LIVE SCORE PREVIEW</p><h2>How weighting works</h2><span>Your ratings are multiplied by each category’s importance. A low rating in a heavily weighted category lowers readiness more.</span><div className="previewScore"><strong>{readinessScore}</strong><span>/100<br/>READINESS</span></div><div className="weightSummary">{rubric.map((item) => <div key={item.id}><span>{item.name || "Untitled category"}</span><strong>{Math.round(item.weight / rubric.reduce((sum, category) => sum + category.weight, 0) * 100)}%</strong></div>)}</div></aside>
         </div>
       </section>}
 
@@ -321,9 +385,9 @@ export default function Home() {
         <div className="reflectionGrid">
           <div className="reflectionSummary"><span>SESSION COMPLETE</span><h2>{sessionName}</h2><p>{excerpts.length} excerpts · {instrument} · {oneTake ? "One take" : "Open attempts"}</p>
             <div className="takePlayback"><span>YOUR PERFORMANCE</span>{audioUrl ? <audio controls src={audioUrl}>Your browser does not support audio playback.</audio> : <p>{recordingError || "Finalizing your recording…"}</p>}</div>
-            <div className="bigScore"><strong>{Math.round(Object.values(ratings).reduce((sum, rating) => sum + rating, 0) / 15 * 100)}</strong><span>/100<br/>READINESS</span></div></div>
+            <div className="bigScore"><strong>{readinessScore}</strong><span>/100<br/>READINESS</span></div></div>
           <div className="reflectionForm"><h2>How did it feel?</h2>
-            {focusItems.map(([name, detail]) => <div className="reflectionRating" key={name}><div><strong>{name}</strong><span>{detail}</span></div><div>{[1,2,3,4,5].map((value) => <button key={value} aria-label={`${name}: ${value} out of 5`} className={value <= ratings[name] ? "selected" : ""} onClick={() => setRatings((items) => ({...items, [name]: value}))}/>)}</div></div>)}
+            {rubric.map((item) => <div className="reflectionRating" key={item.id}><div><strong>{item.name || "Untitled category"}</strong><span>{item.description} · {item.weight}× importance</span></div><div>{[1,2,3,4,5].map((value) => <button key={value} aria-label={`${item.name}: ${value} out of 5`} className={value <= (ratings[item.id] ?? 3) ? "selected" : ""} onClick={() => setRatings((items) => ({...items, [item.id]: value}))}/>)}</div></div>)}
             <label className="reflectionLabel">What will you focus on next?<textarea value={reflection} onChange={(event) => setReflection(event.target.value)} placeholder="Write a note to your future self…" /></label>
             <button className="startButton saveReflection" onClick={saveReflection}>Save reflection <span>→</span></button>
           </div>
