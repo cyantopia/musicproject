@@ -3,8 +3,9 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createClient as createSupabaseClient } from "../lib/supabase/client";
 import { resendSignupConfirmation, signInWithPassword, signOut, signUpWithPassword } from "../lib/supabase/auth";
+import MusicXmlScore from "./components/MusicXmlScore";
 
-type Excerpt = { id: number; title: string; measures: string; file?: string; fileUrl?: string; fileType?: string };
+type Excerpt = { id: number; title: string; measures: string; file?: string; fileUrl?: string; fileType?: string; sourceFile?: File; musicXml?: string; omrStatus?: "processing" | "ready" | "error"; omrError?: string };
 type SessionResult = { id: number; name: string; date: string; instrument: string; score: number; reflection: string; audioUrl?: string };
 type RubricCategory = { id: string; name: string; description: string; weight: number };
 type SightNote = { midi: number; duration: number; staffStep: number };
@@ -228,16 +229,51 @@ export default function Home() {
   function addFiles(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files || []);
     if (!files.length) return;
-    const additions = files.map((file, index) => ({
+    const additions: Excerpt[] = files.map((file, index) => ({
       id: Date.now() + index,
       title: file.name.replace(/\.[^.]+$/, ""),
       measures: "Add measures",
       file: file.name,
       fileUrl: URL.createObjectURL(file),
       fileType: file.type,
+      sourceFile: file,
+      omrStatus: file.type.startsWith("image/") ? "processing" : undefined,
     }));
     setExcerpts((items) => [...items, ...additions]);
     setNotice(`${files.length} excerpt${files.length > 1 ? "s" : ""} added.`);
+    additions.forEach((excerpt) => {
+      if (excerpt.sourceFile?.type.startsWith("image/")) void recognizeExcerpt(excerpt.id, excerpt.sourceFile);
+    });
+    event.target.value = "";
+  }
+
+  async function recognizeExcerpt(id: number, file: File) {
+    const apiUrl = process.env.NEXT_PUBLIC_OMR_API_URL?.replace(/\/$/, "");
+    if (!apiUrl) {
+      setExcerpts((items) => items.map((item) => item.id === id ? { ...item, omrStatus: "error", omrError: "Add NEXT_PUBLIC_OMR_API_URL to connect the Render OMR service." } : item));
+      return;
+    }
+    setExcerpts((items) => items.map((item) => item.id === id ? { ...item, omrStatus: "processing", omrError: "" } : item));
+    const body = new FormData();
+    body.append("file", file);
+    try {
+      const response = await fetch(`${apiUrl}/v1/omr`, { method: "POST", body });
+      if (!response.ok) {
+        let message = `Recognition failed (${response.status}).`;
+        try {
+          const payload = await response.json() as { detail?: string };
+          if (payload.detail) message = payload.detail;
+        } catch (parseError) {
+          void parseError;
+        }
+        throw new Error(message);
+      }
+      const musicXml = await response.text();
+      setExcerpts((items) => items.map((item) => item.id === id ? { ...item, musicXml, omrStatus: "ready", omrError: "" } : item));
+      setNotice("Score recognized — notation and playback are ready.");
+    } catch (reason) {
+      setExcerpts((items) => items.map((item) => item.id === id ? { ...item, omrStatus: "error", omrError: reason instanceof Error ? reason.message : "Score recognition failed." } : item));
+    }
   }
 
   async function startAudition() {
@@ -537,7 +573,7 @@ export default function Home() {
             <article className="excerpt" key={item.id}>
               <span className="grip">⠿</span><span className="number">{String(index + 1).padStart(2, "0")}</span>
               <div className="scoreThumb"><span>𝄞</span></div>
-              <div className="excerptName"><input aria-label="Excerpt name" value={item.title} onChange={(e) => setExcerpts((list) => list.map(x => x.id === item.id ? {...x, title: e.target.value} : x))}/><input aria-label="Measures" value={item.measures} onChange={(e) => setExcerpts((list) => list.map(x => x.id === item.id ? {...x, measures: e.target.value} : x))}/></div>
+              <div className="excerptName"><input aria-label="Excerpt name" value={item.title} onChange={(e) => setExcerpts((list) => list.map(x => x.id === item.id ? {...x, title: e.target.value} : x))}/><input aria-label="Measures" value={item.measures} onChange={(e) => setExcerpts((list) => list.map(x => x.id === item.id ? {...x, measures: e.target.value} : x))}/>{item.omrStatus && <div className={`omrStatus ${item.omrStatus}`}><span>{item.omrStatus === "processing" ? "Scanning score with HOMR…" : item.omrStatus === "ready" ? "MusicXML ready · notation + playback enabled" : item.omrError}</span>{item.omrStatus === "error" && item.sourceFile && <button onClick={() => void recognizeExcerpt(item.id, item.sourceFile!)}>Retry scan</button>}</div>}</div>
               <button className="remove" aria-label={`Remove ${item.title}`} onClick={() => removeExcerpt(item.id)}>×</button>
             </article>
           ))}
@@ -638,7 +674,7 @@ export default function Home() {
           <div className="liveTop"><span><i/> {phase === "prep" ? "PREPARE" : "RECORDING"}</span><button onClick={cancelSession} aria-label="Cancel session">×</button></div>
           <div className="liveBody">
             <div className="scoreViewer">
-              {excerpts[current]?.fileUrl ? (
+              {excerpts[current]?.musicXml ? <MusicXmlScore musicXml={excerpts[current].musicXml!}/> : excerpts[current]?.fileUrl ? (
                 excerpts[current]?.fileType === "application/pdf" || excerpts[current]?.file?.toLowerCase().endsWith(".pdf")
                   ? <object data={excerpts[current].fileUrl} type="application/pdf" aria-label={`${excerpts[current].title} score`}><a href={excerpts[current].fileUrl} target="_blank" rel="noreferrer">Open score PDF</a></object>
                   : <img src={excerpts[current].fileUrl} alt={`${excerpts[current].title} score`} />
