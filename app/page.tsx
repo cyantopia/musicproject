@@ -7,6 +7,83 @@ import { resendSignupConfirmation, signInWithPassword, signOut, signUpWithPasswo
 type Excerpt = { id: number; title: string; measures: string; file?: string; fileUrl?: string; fileType?: string };
 type SessionResult = { id: number; name: string; date: string; instrument: string; score: number; reflection: string; audioUrl?: string };
 type RubricCategory = { id: string; name: string; description: string; weight: number };
+type SightNote = { midi: number; duration: number; staffStep: number };
+
+const keyRoots: Record<string, number> = { C: 60, G: 67, D: 62, F: 65, Bb: 58 };
+const keyStaffRoots: Record<string, number> = { C: 0, G: 4, D: 1, F: 3, Bb: -1 };
+const keySignatures: Record<string, { symbol: string; treble: number[]; bass: number[] }> = {
+  C: { symbol: "", treble: [], bass: [] },
+  G: { symbol: "♯", treble: [80], bass: [90] },
+  D: { symbol: "♯", treble: [80, 95], bass: [90, 105] },
+  F: { symbol: "♭", treble: [100], bass: [110] },
+  Bb: { symbol: "♭", treble: [100, 85], bass: [110, 95] },
+};
+
+function makeSightReadingNotes(key: string, measures: number, beats: number, difficulty: string, clef: string, allowedDurations: number[]) {
+  const scale = [0, 2, 4, 5, 7, 9, 11, 12];
+  const maxStep = difficulty === "Beginner" ? 1 : difficulty === "Intermediate" ? 2 : 4;
+  let scaleIndex = 3;
+  const notes: SightNote[] = [];
+  const totalBeats = measures * beats;
+  let elapsed = 0;
+  while (elapsed < totalBeats) {
+    const remainingInMeasure = beats - (elapsed % beats || 0);
+    const choices = allowedDurations.filter((duration) => duration <= remainingInMeasure && duration <= totalBeats - elapsed);
+    const duration = choices[Math.floor(Math.random() * choices.length)] || Math.min(1, totalBeats - elapsed);
+    const direction = Math.floor(Math.random() * (maxStep * 2 + 1)) - maxStep;
+    scaleIndex = Math.max(0, Math.min(scale.length - 1, scaleIndex + direction));
+    if (elapsed + duration >= totalBeats) scaleIndex = 0;
+    notes.push({
+      midi: keyRoots[key] + scale[scaleIndex] + (clef === "Bass" ? -12 : 0),
+      duration,
+      staffStep: keyStaffRoots[key] + scaleIndex + (clef === "Bass" ? -7 : 0),
+    });
+    elapsed += duration;
+  }
+  return notes;
+}
+
+function sightReadingSvg(notes: SightNote[], key: string, meter: number, tempo: number, clef: string) {
+  const shortestDuration = Math.min(...notes.map((note) => note.duration));
+  const measuresPerSystem = shortestDuration <= .25 ? 2 : shortestDuration <= .5 ? 3 : 4;
+  const perSystem = meter * measuresPerSystem;
+  const totalBeats = notes.reduce((sum, note) => sum + note.duration, 0);
+  const systems = Math.ceil(totalBeats / perSystem);
+  const height = 150 + systems * 150;
+  let elapsedBeats = 0;
+  const noteMarkup = notes.map((note) => {
+    const system = Math.floor(elapsedBeats / perSystem);
+    const within = elapsedBeats % perSystem;
+    const measureIndex = Math.floor(within / meter);
+    const beatInMeasure = within % meter;
+    const measureWidth = 750 / measuresPerSystem;
+    const x = 190 + measureIndex * measureWidth + 20 + beatInMeasure * ((measureWidth - 32) / meter);
+    const middleLineStep = clef === "Bass" ? -6 : 6;
+    const y = 100 + system * 150 - (note.staffStep - middleLineStep) * 5;
+    const staffTop = 80 + system * 150;
+    const staffBottom = 120 + system * 150;
+    const ledgerYs: number[] = [];
+    if (y >= staffBottom + 10) for (let ledgerY = staffBottom + 10; ledgerY <= y; ledgerY += 10) ledgerYs.push(ledgerY);
+    if (y <= staffTop - 10) for (let ledgerY = staffTop - 10; ledgerY >= y; ledgerY -= 10) ledgerYs.push(ledgerY);
+    const ledgers = ledgerYs.map((ledgerY) => `<line x1="${x - 13}" y1="${ledgerY}" x2="${x + 13}" y2="${ledgerY}" stroke="#17332d" stroke-width="1.5"/>`).join("");
+    const filled = note.duration < 2;
+    const flagCount = note.duration === .5 ? 1 : note.duration === .25 ? 2 : 0;
+    const flags = Array.from({ length: flagCount }, (_, flag) => `<path d="M ${x + 8} ${y - 34 + flag * 8} q 16 7 9 20" fill="none" stroke="#17332d" stroke-width="2.5"/>`).join("");
+    const markup = `${ledgers}<ellipse cx="${x}" cy="${y}" rx="9" ry="6" transform="rotate(-18 ${x} ${y})" fill="${filled ? "#17332d" : "#fffdf7"}" stroke="#17332d" stroke-width="2"/><line x1="${x + 8}" y1="${y}" x2="${x + 8}" y2="${y - 34}" stroke="#17332d" stroke-width="2"/>${flags}`;
+    elapsedBeats += note.duration;
+    return markup;
+  }).join("");
+  const staffs = Array.from({ length: systems }, (_, system) => Array.from({ length: 5 }, (__, line) => `<line x1="60" y1="${80 + system * 150 + line * 10}" x2="960" y2="${80 + system * 150 + line * 10}" stroke="#718078" stroke-width="1"/>`).join("")).join("");
+  const barlines = Array.from({ length: systems }, (_, system) => Array.from({ length: measuresPerSystem + 1 }, (__, bar) => `<line x1="${190 + bar * (750 / measuresPerSystem)}" y1="${80 + system * 150}" x2="${190 + bar * (750 / measuresPerSystem)}" y2="${120 + system * 150}" stroke="#718078" stroke-width="${bar === measuresPerSystem ? 2 : 1}"/>`).join("")).join("");
+  const signature = keySignatures[key];
+  const signatureYs = clef === "Bass" ? signature.bass : signature.treble;
+  const musicStart = Array.from({length: systems},(_,s) => {
+    const keyMarks = signatureYs.map((y, index) => `<text x="${108 + index * 18}" y="${y + s * 150 + 7}" font-family="Georgia" font-size="25" fill="#17332d">${signature.symbol}</text>`).join("");
+    const timeX = 118 + signatureYs.length * 18;
+    return `<text x="64" y="${clef === "Bass" ? 116+s*150 : 124+s*150}" font-family="Bravura, 'Noto Music', serif" font-size="${clef === "Bass" ? 48 : 68}" fill="#17332d">${clef === "Bass" ? "𝄢" : "𝄞"}</text>${keyMarks}<text x="${timeX}" y="${98+s*150}" text-anchor="middle" font-family="Georgia" font-size="24" font-weight="700" fill="#17332d">${meter}</text><text x="${timeX}" y="${120+s*150}" text-anchor="middle" font-family="Georgia" font-size="24" font-weight="700" fill="#17332d">4</text>`;
+  }).join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="${height}" viewBox="0 0 1000 ${height}"><rect width="100%" height="100%" fill="#fffdf7"/><text x="60" y="42" font-family="Georgia" font-size="24" fill="#17332d">StageReady Sight-Reading Study</text><text x="940" y="42" text-anchor="end" font-family="Arial" font-size="14" fill="#718078">${clef} clef · ${key} major · ${meter}/4 · ♩=${tempo}</text><g transform="translate(0 42)">${staffs}${barlines}${musicStart}${noteMarkup}</g></svg>`;
+}
 
 const defaultRubric: RubricCategory[] = [
   { id: "tone", name: "Tone", description: "Centered and resonant", weight: 3 },
@@ -28,7 +105,18 @@ export default function Home() {
   const [seconds, setSeconds] = useState(prepTime);
   const [current, setCurrent] = useState(0);
   const [notice, setNotice] = useState("");
-  const [view, setView] = useState<"practice" | "history" | "settings" | "reflection">("practice");
+  const [view, setView] = useState<"practice" | "sightreading" | "history" | "settings" | "reflection">("practice");
+  const [sightKey, setSightKey] = useState("C");
+  const [sightMeter, setSightMeter] = useState(4);
+  const [sightMeasures, setSightMeasures] = useState(8);
+  const [sightTempo, setSightTempo] = useState(80);
+  const [sightDifficulty, setSightDifficulty] = useState("Beginner");
+  const [sightClef, setSightClef] = useState("Treble");
+  const [useEighthNotes, setUseEighthNotes] = useState(false);
+  const [useSixteenthNotes, setUseSixteenthNotes] = useState(false);
+  const [useHalfNotes, setUseHalfNotes] = useState(false);
+  const [sightNotes, setSightNotes] = useState<SightNote[]>([]);
+  const [referencePlaying, setReferencePlaying] = useState(false);
   const [rubric, setRubric] = useState<RubricCategory[]>(defaultRubric);
   const [ratings, setRatings] = useState<Record<string, number>>(() => Object.fromEntries(defaultRubric.map((item) => [item.id, 3])));
   const [reflection, setReflection] = useState("");
@@ -49,6 +137,8 @@ export default function Home() {
   const audioChunksRef = useRef<Blob[]>([]);
   const microphoneStreamRef = useRef<MediaStream | null>(null);
   const rubricLoadedRef = useRef(false);
+  const referenceTimeoutRef = useRef<number | null>(null);
+  const referenceAudioRef = useRef<AudioContext | null>(null);
 
   const ordered = useMemo(() => excerpts, [excerpts]);
   const supabase = useMemo(() => createSupabaseClient(), []);
@@ -87,6 +177,11 @@ export default function Home() {
     const timeout = window.setTimeout(() => setNotice(""), 3500);
     return () => window.clearTimeout(timeout);
   }, [notice]);
+
+  useEffect(() => () => {
+    if (referenceTimeoutRef.current) window.clearTimeout(referenceTimeoutRef.current);
+    void referenceAudioRef.current?.close();
+  }, []);
 
   useEffect(() => {
     const savedRubric = window.localStorage.getItem("stageready-rubric");
@@ -234,6 +329,104 @@ export default function Home() {
     setNotice(`${categoryName} removed from your rubric.`);
   }
 
+  function generateSightReading() {
+    stopSightReading();
+    const durations = [1, ...(useEighthNotes ? [.5] : []), ...(useSixteenthNotes ? [.25] : []), ...(useHalfNotes ? [2] : [])];
+    setSightNotes(makeSightReadingNotes(sightKey, sightMeasures, sightMeter, sightDifficulty, sightClef, durations));
+    setNotice("A new sight-reading excerpt is ready.");
+  }
+
+  function playSightReading() {
+    if (!sightNotes.length) return;
+    if (referencePlaying) {
+      stopSightReading();
+      return;
+    }
+    setReferencePlaying(true);
+    const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const context = new AudioContextClass();
+    referenceAudioRef.current = context;
+    const beatSeconds = 60 / sightTempo;
+    let playbackBeats = 0;
+    sightNotes.forEach((note) => {
+      const fundamental = context.createOscillator();
+      const harmonic = context.createOscillator();
+      const harmonicGain = context.createGain();
+      const vibrato = context.createOscillator();
+      const vibratoDepth = context.createGain();
+      const filter = context.createBiquadFilter();
+      const gain = context.createGain();
+      const start = context.currentTime + .08 + playbackBeats * beatSeconds;
+      const end = start + beatSeconds * note.duration * 1.12;
+      const frequency = 440 * Math.pow(2, (note.midi - 69) / 12);
+      const bowedWave = context.createPeriodicWave(
+        new Float32Array([0, 0, 0, 0, 0, 0, 0]),
+        new Float32Array([0, 1, .42, .24, .14, .08, .045]),
+        { disableNormalization: false },
+      );
+      fundamental.setPeriodicWave(bowedWave);
+      fundamental.frequency.value = frequency;
+      harmonic.type = "sine";
+      harmonic.frequency.value = frequency * 2;
+      harmonic.detune.value = 2;
+      harmonicGain.gain.value = .055;
+      vibrato.type = "sine";
+      vibrato.frequency.value = 5.1;
+      vibratoDepth.gain.value = 4.5;
+      vibrato.connect(vibratoDepth);
+      vibratoDepth.connect(fundamental.detune);
+      vibratoDepth.connect(harmonic.detune);
+      filter.type = "lowpass";
+      filter.frequency.value = Math.min(2100, frequency * 5.5);
+      filter.Q.value = .7;
+      const noteLength = end - start;
+      const attackEnd = start + Math.min(.14, noteLength * .25);
+      const releaseStart = start + noteLength * .72;
+      gain.gain.setValueAtTime(.0001, start);
+      gain.gain.linearRampToValueAtTime(.068, attackEnd);
+      gain.gain.setValueAtTime(.064, releaseStart);
+      gain.gain.exponentialRampToValueAtTime(.0001, end);
+      fundamental.connect(filter);
+      harmonic.connect(harmonicGain).connect(filter);
+      filter.connect(gain).connect(context.destination);
+      fundamental.start(start);
+      harmonic.start(start);
+      vibrato.start(start + Math.min(.08, beatSeconds * .15));
+      fundamental.stop(end + .02);
+      harmonic.stop(end + .02);
+      vibrato.stop(end + .02);
+      playbackBeats += note.duration;
+    });
+    if (referenceTimeoutRef.current) window.clearTimeout(referenceTimeoutRef.current);
+    const totalDuration = sightNotes.reduce((sum, note) => sum + note.duration, 0);
+    referenceTimeoutRef.current = window.setTimeout(() => {
+      setReferencePlaying(false);
+      referenceAudioRef.current = null;
+      void context.close();
+    }, totalDuration * beatSeconds * 1000 + 1000);
+  }
+
+  function stopSightReading() {
+    if (referenceTimeoutRef.current) {
+      window.clearTimeout(referenceTimeoutRef.current);
+      referenceTimeoutRef.current = null;
+    }
+    if (referenceAudioRef.current) {
+      void referenceAudioRef.current.close();
+      referenceAudioRef.current = null;
+    }
+    setReferencePlaying(false);
+  }
+
+  function addSightReadingToAudition() {
+    if (!sightNotes.length) return;
+    const svg = sightReadingSvg(sightNotes, sightKey, sightMeter, sightTempo, sightClef);
+    const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+    setExcerpts((items) => [...items, { id: Date.now(), title: `${sightDifficulty} sight-reading study`, measures: `mm. 1–${sightMeasures} · ${sightClef} clef · ${sightKey} major`, file: "generated-sight-reading.svg", fileUrl: url, fileType: "image/svg+xml" }]);
+    setNotice("Sight-reading excerpt added to your audition.");
+    setView("practice");
+  }
+
   async function handleAuthSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setAuthBusy(true);
@@ -288,6 +481,7 @@ export default function Home() {
         </a>
         <nav aria-label="Primary navigation">
           <button className={view === "practice" ? "active" : ""} onClick={() => setView("practice")}>Practice</button>
+          <button className={view === "sightreading" ? "active" : ""} onClick={() => setView("sightreading")}>Sight-reading</button>
           <button className={view === "history" ? "active" : ""} onClick={() => setView("history")}>History</button>
           <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>Settings</button>
         </nav>
@@ -355,6 +549,32 @@ export default function Home() {
           <button className="startButton" onClick={startAudition} disabled={!excerpts.length}>Begin mock audition <span>→</span></button>
         </section>
       </section></>}
+
+      {view === "sightreading" && <section className="appView sightReadingView" id="sight-reading">
+        <div className="viewHeading"><span className="step">SR</span><p>READ WHAT YOU HAVE NEVER SEEN</p><h1>Sight-reading studio</h1><span>Generate an original, playable excerpt and practice performing it on the first attempt.</span></div>
+        <div className="sightGrid">
+          <section className="sightControls card">
+            <div className="cardTitle"><span className="roundIcon">𝄞</span><div><h3>Build your challenge</h3><p>Choose the musical limits, then reveal a new excerpt.</p></div></div>
+            <div className="twoCol">
+              <label>Difficulty<select value={sightDifficulty} onChange={(event) => setSightDifficulty(event.target.value)}><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select></label>
+              <label>Key<select value={sightKey} onChange={(event) => setSightKey(event.target.value)}><option>C</option><option>G</option><option>D</option><option>F</option><option>Bb</option></select></label>
+              <label>Clef<select value={sightClef} onChange={(event) => setSightClef(event.target.value)}><option>Treble</option><option>Bass</option></select></label>
+              <label>Time signature<select value={sightMeter} onChange={(event) => setSightMeter(Number(event.target.value))}><option value="3">3/4</option><option value="4">4/4</option></select></label>
+              <label>Length<select value={sightMeasures} onChange={(event) => setSightMeasures(Number(event.target.value))}><option value="4">4 measures</option><option value="8">8 measures</option><option value="12">12 measures</option></select></label>
+            </div>
+            <fieldset className="rhythmChoices"><legend>Include note values</legend><label><input type="checkbox" checked={useEighthNotes} onChange={(event) => setUseEighthNotes(event.target.checked)}/><span>♪</span> Eighth notes</label><label><input type="checkbox" checked={useSixteenthNotes} onChange={(event) => setUseSixteenthNotes(event.target.checked)}/><span>♬</span> Sixteenth notes</label><label><input type="checkbox" checked={useHalfNotes} onChange={(event) => setUseHalfNotes(event.target.checked)}/><span>𝅗𝅥</span> Two-beat notes</label></fieldset>
+            <label>Tempo <span className="rangeValue">♩ = {sightTempo}</span><input className="tempoSlider" style={{ background: `linear-gradient(to right, var(--orange) 0%, var(--orange) ${(sightTempo - 50) / 90 * 100}%, #d4d7d2 ${(sightTempo - 50) / 90 * 100}%, #d4d7d2 100%)` }} type="range" min="50" max="140" step="5" value={sightTempo} onChange={(event) => setSightTempo(Number(event.target.value))}/></label>
+            <button className="generateButton" onClick={generateSightReading}>{sightNotes.length ? "Generate another excerpt" : "Generate my excerpt"} <span>→</span></button>
+          </section>
+          <section className="generatedScore">
+            {sightNotes.length ? <>
+              <div className="generatedToolbar"><div><span>NEW · NEVER REPEATED</span><strong>{sightDifficulty} · {sightClef} clef · {sightKey} major · {sightMeter}/4</strong></div><div><button className={referencePlaying ? "stopReference" : ""} onClick={playSightReading}>{referencePlaying ? "■ Stop reference" : "▶ Hear reference"}</button><button className="useExcerpt" onClick={addSightReadingToAudition}>Use in mock audition →</button></div></div>
+              <div className="generatedNotation" dangerouslySetInnerHTML={{ __html: sightReadingSvg(sightNotes, sightKey, sightMeter, sightTempo, sightClef) }}/>
+              <p className="sightTip">Try it once before listening to the reference. The final note intentionally resolves to the home key.</p>
+            </> : <div className="emptyScore"><span>𝄢</span><h2>Your unseen music will appear here.</h2><p>Set your challenge, then generate an original excerpt.</p></div>}
+          </section>
+        </div>
+      </section>}
 
       {view === "settings" && <section className="appView settingsView" id="settings">
         <div className="viewHeading"><span className="step">03</span><p>MAKE IT YOURS</p><h1>Rubric settings</h1><span>Choose what matters and give important categories more influence on your readiness score.</span></div>
